@@ -23,7 +23,7 @@
         .aside-header { padding: 15px 12px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); }
         .aside-header h2 { margin: 0; font-size: 0.85rem; font-weight: 800; color: var(--accent); text-align: center; letter-spacing: -0.5px; line-height: 1.4; }
         .special-menu { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .nav-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+        .nav-list { flex: 1; overflow-y: auto; padding: 8px 0; -webkit-overflow-scrolling: touch; } /* iOS 기기 부드러운 터치 스크롤 지원 */
         .nav-item { padding: 10px 14px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; transition: all 0.2s; border-left: 3px solid transparent; font-size: 0.8rem; color: #94a3b8; }
         .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
         .nav-item.active { background: rgba(59, 130, 246, 0.15); border-left-color: var(--accent); color: white; font-weight: 600; }
@@ -236,7 +236,6 @@
 <div id="msgBox"></div>
 
 <script>
-    // 새로 제공해주신 Firebase 프로젝트 설정으로 변경 완료
     const firebaseConfig = {
         apiKey: "AIzaSyAGz5HuHrrH4pzQTMLqybbro5wP9EraVAA",
         authDomain: "vibecoding-game3.firebaseapp.com",
@@ -253,14 +252,19 @@
     let pages = []; let ideas = []; let reviews = [];
 
     function initApp() {
+        // 실시간 동기화 리스너 최적화: 사이드바와 메인 컨텐츠 영역의 렌더링 역할을 격리
         db.collection("projects").orderBy("createdAt", "asc").onSnapshot(snapshot => {
-            pages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); render();
+            pages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); 
+            renderSidebar(); 
+            renderMain();
         });
         db.collection("ideas").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-            ideas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); render();
+            ideas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); 
+            renderMain(); // 아이디어 등록 시 왼쪽 사이드바는 다시 그리지 않아 스크롤이 고정됨
         });
         db.collection("reviews").orderBy("createdAt", "desc").onSnapshot(snapshot => {
-            reviews = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); render();
+            reviews = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); 
+            renderMain(); // 리뷰 등록 시 왼쪽 사이드바는 다시 그리지 않아 스크롤이 고정됨
         });
     }
 
@@ -268,6 +272,11 @@
 
     function renderSidebar() {
         const nav = document.getElementById('navList');
+        if (!nav) return;
+        
+        // 중요: UI 업데이트 전 현재 스크롤 위치를 고스란히 기억합니다. (아이패드 오작동 해결책)
+        const savedScrollTop = nav.scrollTop;
+        
         document.getElementById('ideaMenuBtn').className = `nav-item idea-menu ${activeView === 'ideas' ? 'active' : ''}`;
         document.getElementById('reviewMenuBtn').className = `nav-item review-menu ${activeView === 'reviews' ? 'active' : ''}`;
         
@@ -295,12 +304,25 @@
                 </div>
             </div>`;
         }).join('');
+
+        // 중요: 목록이 새로 그려진 즉시 기억하고 있던 이전 스크롤 위치로 원상 복구합니다.
+        nav.scrollTop = savedScrollTop;
     }
 
     function renderMain() {
         const container = document.getElementById('viewContainer');
         const titleEl = document.getElementById('currentPageTitle');
+        if (!container) return;
         
+        // 1. [핵심 기능] 오른쪽 메인 영역 및 하위 자식 스크롤값 정밀 수집
+        const savedMainScroll = container.scrollTop;
+        const savedDescendantScrolls = [];
+        const scrollables = container.querySelectorAll('.idea-board, .q-content');
+        scrollables.forEach(el => {
+            savedDescendantScrolls.push({ scrollTop: el.scrollTop });
+        });
+        
+        // 2. 렌더링 분기 시작
         if (activeView === 'ideas') {
             titleEl.innerHTML = "💡 게임 개발 아이디어 제출";
             container.innerHTML = `<div class="idea-board">
@@ -446,6 +468,15 @@
                 </section>
             </div>`;
         }
+
+        // 3. [핵심 기능] 갱신된 DOM에 이전 스크롤 상태들을 역순으로 전량 복구
+        container.scrollTop = savedMainScroll;
+        const newScrollables = container.querySelectorAll('.idea-board, .q-content');
+        newScrollables.forEach((el, index) => {
+            if (savedDescendantScrolls[index]) {
+                el.scrollTop = savedDescendantScrolls[index].scrollTop;
+            }
+        });
     }
 
     function renderFeedbackItem(item, type) {
@@ -529,7 +560,12 @@
         render(); 
     }
     
-    function switchView(v, id = null) { activeView = v; activePageId = id; render(); }
+    function switchView(v, id = null) { 
+        activeView = v; 
+        activePageId = id; 
+        renderSidebar(); // 탭 이동 및 선택 시에만 사이드바 활성 클래스를 업데이트
+        renderMain(); 
+    }
     
     function openModal(id) { 
         if (id === 'conceptModal' && activePageId) {
