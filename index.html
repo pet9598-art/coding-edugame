@@ -51,8 +51,9 @@
 
         .nav-actions { display: none; gap: 4px; }
         .admin-mode .nav-actions { display: flex; }
-        .btn-icon { background: none; border: none; padding: 3px; cursor: pointer; color: inherit; border-radius: 4px; display: flex; align-items: center; opacity: 0.6; }
+        .btn-icon { background: none; border: none; padding: 3px; cursor: pointer; color: inherit; border-radius: 4px; display: flex; align-items: center; opacity: 0.6; font-size: 0.7rem; }
         .btn-icon:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+        .btn-icon:disabled:hover { opacity: 0.25; background: none; }
         .btn-icon.del:hover { color: var(--danger); }
         .btn-icon.coin:hover { color: var(--warning); }
         
@@ -254,8 +255,10 @@
     function initApp() {
         // 실시간 동기화 리스너 최적화: 사이드바와 메인 컨텐츠 영역의 렌더링 역할을 격리
         db.collection("projects").orderBy("createdAt", "asc").onSnapshot(snapshot => {
-            pages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); 
-            renderSidebar(); 
+            pages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // order 필드가 없는 기존 게임은 뒤로 밀리고, 있는 게임은 order 오름차순으로 정렬
+            pages.sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
+            renderSidebar();
             renderMain();
         });
         db.collection("ideas").orderBy("createdAt", "desc").onSnapshot(snapshot => {
@@ -280,11 +283,11 @@
         document.getElementById('ideaMenuBtn').className = `nav-item idea-menu ${activeView === 'ideas' ? 'active' : ''}`;
         document.getElementById('reviewMenuBtn').className = `nav-item review-menu ${activeView === 'reviews' ? 'active' : ''}`;
         
-        nav.innerHTML = pages.map(p => {
+        nav.innerHTML = pages.map((p, idx) => {
             const isTeacher = p.devType === 'teacher';
             const badgeClass = isTeacher ? 'teacher' : 'student';
             const badgeText = isTeacher ? '교사' : '학생';
-            
+
             const subType = p.subjectType || '수학';
             let subClass = 'math';
             if (subType === '국어') subClass = 'ko';
@@ -299,6 +302,8 @@
                     ${escapeHtml(p.subject)}
                 </span>
                 <div class="nav-actions">
+                    <button class="btn-icon" ${idx === 0 ? 'disabled style="opacity:0.25;cursor:default;"' : ''} onclick="event.stopPropagation(); moveProject('${p.id}', 'up')" title="위로">▲</button>
+                    <button class="btn-icon" ${idx === pages.length - 1 ? 'disabled style="opacity:0.25;cursor:default;"' : ''} onclick="event.stopPropagation(); moveProject('${p.id}', 'down')" title="아래로">▼</button>
                     <button class="btn-icon" onclick="event.stopPropagation(); openRenameModal('${p.id}')" title="이름 변경">✎</button>
                     <button class="btn-icon del" onclick="event.stopPropagation(); openDeleteModal('project', '${p.id}')" title="삭제">✕</button>
                 </div>
@@ -753,7 +758,25 @@
         showMsg("코인 보상이 저장되었습니다.");
     }
 
-    function openRenameModal(id) { 
+    async function moveProject(id, direction) {
+        if (!isAdminMode) return;
+        const idx = pages.findIndex(p => p.id === id);
+        if (idx === -1) return;
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= pages.length) return;
+
+        const reordered = [...pages];
+        [reordered[idx], reordered[targetIdx]] = [reordered[targetIdx], reordered[idx]];
+
+        // 전체 게임의 order 값을 현재 화면 순서 그대로 다시 기록 (기존에 order가 없던 게임도 이 시점에 채워짐)
+        const batch = db.batch();
+        reordered.forEach((p, i) => {
+            batch.update(db.collection("projects").doc(p.id), { order: i });
+        });
+        await batch.commit();
+    }
+
+    function openRenameModal(id) {
         renameTargetId = id; 
         document.getElementById('renameInput').value = pages.find(p => p.id === id).subject; 
         openModal('renameModal'); 
